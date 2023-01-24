@@ -19,6 +19,7 @@ Mine is. Successful "sim" is not to hit wall within approx. 60 seconds.
 There is a lot that would need refinement and enhancement. 
 Also threading it really not necassary but could in the end make main() very "clean".
 I would probably add proper event-handler with callbacks etc (instead of just a mutex protected variable, not "pretty"...)
+And a more correct way to handle start direction vs. movement... this is just a "quick fix" to get car initally moving at all.
 
 * What did you think of this recruitment test?
 
