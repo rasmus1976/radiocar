@@ -70,6 +70,9 @@ void set_car_map(int maxX, int maxY, char dir, bool lock)
         case 'w': car.dir = dir_west ; break ;
         default: break ;
     }
+	
+	printf("DIR: %d %c\n", car.dir, dir);
+	Sleep(3000);
 
     if(lock) pthread_mutex_unlock(&car_lock);
 }
@@ -86,7 +89,20 @@ void *runDraw(void* arg)
     }
 
 	draw_room(car.map.maxX, car.map.maxY);
-	    
+	
+	//set initial heading...    
+	if(car.cmd == key_cmd_none)
+	{
+		switch(car.dir)
+		{
+			case dir_east: car.cmd = key_cmd_right ; break ;
+			case dir_west: car.cmd = key_cmd_left ; break ;
+			case dir_north: car.cmd = key_cmd_fw ; break ;
+			case dir_south: car.cmd = key_cmd_bw; break ;
+			default: break;
+		}
+	}	
+	
 	//run this thread until stopped/killed...
     while(true)
     {
@@ -97,7 +113,7 @@ void *runDraw(void* arg)
 		
         switch(car.cmd)
         {
-			// This would be more complex taking into account the startdir... (and the current dir afterwards...)
+			// This would be more complex taking into account the startdir, 90 degree turns... (and hence the current dir afterwards...)
             // for now, simply move up/back/right/left...
 			case key_cmd_bw : car.map.currentPos.Y ++ ; break ;
             case key_cmd_fw : car.map.currentPos.Y -- ; break ;
@@ -164,7 +180,7 @@ static void draw_room(int maxx, int maxy)
 	for(row = 0; row < maxy; row ++)
 		printf("%s", (char*)&room_matrix[row][0]);
 	
-	printf("\nKeys f = forward, b = back, r = right, l = left, q = quit/exit (max 60 seconds)\n\n");
+	printf("\nKeys hejsan f = forward, b = back, r = right, l = left, q = quit/exit (max 60 seconds)\n\n");
 }
 
 static bool posWithinRoom(car_t* car)

@@ -32,11 +32,10 @@ int main()
     scanf("%d", &hight);
 	printf("Speed (min 1, max 10): ");
     scanf("%d", &speed);
-    //printf("Finally direction (n,s,e,w): ");
-    //scanf("%d", &dir);
+    printf("Finally direction (n,s,e,w): ");
+    scanf("%s", &dir);
 		
-	
-    set_car_map(base, hight, dir[0], false);
+	set_car_map(base, hight, dir[0], false);
 	set_car_speed(speed, false);
 
     system("cls");
@@ -63,7 +62,10 @@ int main()
 	//ok, lets start a thread to do the actual rendering... send console out handle
 	//this function/process will only handle input and forward it to rendering thread.
 	//hence, all the "fun stuff" is done in runDraw(), passed as thread starting point
-    (void)pthread_create( &thread1, NULL, runDraw, (void*)hConsoleOut);
+    if(pthread_create( &thread1, NULL, runDraw, (void*)hConsoleOut) != 0)
+	{
+		errorExit("Thread error");
+	}
     	
     while (i < 600) 
 	{
