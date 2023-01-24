@@ -1,21 +1,19 @@
 #include <stdio.h>
 #include <stdlib.h>
-//#include <conio.h>
 #include <windows.h>
 #include <pthread.h>
 #include "stdbool.h"
 
-#define MAX_X   64
+#define MAX_X   64 
 #define MAX_Y   64
 
-static void ErrorExit(LPSTR);
-static bool KeyEventProc(KEY_EVENT_RECORD ker);
+#define MIN_X	12 //no use drawing a room smaller than 12x12n pixels...
+#define MIN_Y	12
 
-// Global variables are here for example, avoid that.
-DWORD fdwSaveOldMode;
-HANDLE hStdin;
-
-char room_matrix[MAX_Y][MAX_X];
+//function prototypes
+//static void errorExit(char* lpszMessage, HANDLE hStdin, DWORD fdwSaveOldMode);
+static void errorExit(char* lpszMessage);
+static bool handleKeyInput(KEY_EVENT_RECORD ker);
 
 typedef enum key_cmd { 
     key_cmd_none = 0,
@@ -35,8 +33,9 @@ typedef enum directon {
 
 typedef struct car {
     key_cmd_t cmd ;
-    directon_t dir ;
-    struct {
+    directon_t dir ; //starting dir, would affect coordinates (e.g. how turning would affect position)
+    int speed ; // 1-10 where 10 is the fastest
+	struct {
         COORD currentPos ;
 		COORD lastPos;
 		int maxX;
@@ -44,18 +43,26 @@ typedef struct car {
     } map ;
 } car_t ;
 
+//global vars...
+
+char room_matrix[MAX_Y + 1][MAX_X + 1]; // y == rows and thus x == lines...
+
 car_t car = {   .cmd = key_cmd_none,
-                .dir = dir_none, 
+                .dir = dir_none,
+				.speed = 5,
                 .map.currentPos.X = 0,
                 .map.currentPos.Y = 0,
-                .map.maxX = 32,
+                .map.maxX = 64,
                 .map.maxY = 64,
               };
 
 pthread_mutex_t car_lock;
 
+//these could quite easily be made local vars
+DWORD fdwSaveOldMode;
+HANDLE hStdin;
 
-void draw_room(int maxx, int maxy)
+static void draw_room(int maxx, int maxy)
 {
 	//reset
 	memset(&room_matrix[0], 32, MAX_Y * MAX_X);
@@ -69,10 +76,9 @@ void draw_room(int maxx, int maxy)
 	
 	//then others...
 	int row;
-	for(row = 1; row < maxy; row ++)
+	for(row = 1; row < maxy - 1; row ++)
 	{
 		// set space to avoid null term...
-	//	memset(&room_matrix[row][0], 32, MAX_X);
 		room_matrix[row][0] = '|';
 		room_matrix[row][maxx - 1] = '|';
 		room_matrix[row][maxx] = '\n' ;
@@ -80,44 +86,30 @@ void draw_room(int maxx, int maxy)
 	}
 	
 	//and last one...
-	memset(&room_matrix[maxy][0], '-', maxx);
-	room_matrix[maxy][0] = '|';
-	room_matrix[maxy][maxx - 1] = '|';
-	room_matrix[maxy][maxx] = '\n';
-	room_matrix[maxy][maxx + 1] = 0;
+	memset(&room_matrix[maxy - 1][0], '-', maxx);
+	room_matrix[maxy - 1][0] = '|';
+	room_matrix[maxy - 1][maxx - 1] = '|';
+	room_matrix[maxy - 1][maxx] = '\n';
+	room_matrix[maxy - 1][maxx + 1] = 0;
 		
 	system("cls");
-	printf("Keys f = forward, b = back, r = right, l = left, q = quit/exit (max 60 seconds)\n\n");
-	for(row = 0; row <= maxy; row ++)
+	//cannot print all at once (i.e. &room_matrix[0][0] since each row is nulled and will mess up rendering...
+	//well, we only do this once anyway (for now...)
+	for(row = 0; row < maxy; row ++)
 		printf("%s", (char*)&room_matrix[row][0]);
 	
-	/*
-	char line[64] ;
-    char lineArea[64];
-    memset(line, 0, sizeof(line));
-    memset(line, '-', maxx);
-    memset(lineArea, 32, sizeof(lineArea));
-    line[0] = '|'; 
-    lineArea[0] = '|';
-    line[maxx - 1] = '|';
-    lineArea[maxx - 1] = '|';
-    //lineArea[maxx] = '\n';
+	printf("\nKeys f = forward, b = back, r = right, l = left, q = quit/exit (max 60 seconds)\n\n");
 
-    memset(&lineArea[maxx], 0, 64 - maxx) ;
+}
 
-	return ;
-
-    printf("Keys f = forward, b = back, r = right, l = left, q = quit/exit (max 60 seconds)\n\n");
-    printf("%s\n", (char*)line);
-
-    for(int k = 1; k < maxy; k ++)
-    {
-        printf("%s\n", (char*)lineArea);
-      //  Sleep(1000);
-    }
-
-    printf("%s\n", (char*)line);
-*/
+void set_car_speed(int speed)
+{
+	if(speed < 1) speed = 1;
+	if(speed > 10) speed = 10;
+	
+	pthread_mutex_lock(&car_lock);
+	car.speed = speed ;
+	pthread_mutex_unlock(&car_lock);
 }
 
 void set_car_params(directon_t dir, key_cmd_t cmd)
@@ -131,7 +123,6 @@ void set_car_params(directon_t dir, key_cmd_t cmd)
 
     if(cmd != key_cmd_none)
     {
-     //   printf("setting cmd = %d\n", cmd);
         car.cmd = cmd ;
     }
 
@@ -142,16 +133,18 @@ void set_car_map(int maxX, int maxY, char dir)
 {
     pthread_mutex_lock(&car_lock);
 
-    if(maxX > MAX_X) maxX = MAX_X ;
-    if(maxY > MAX_Y) maxY = MAX_Y ;
+	if(maxY < MIN_Y) maxY = MIN_Y;
+	if(maxX < MIN_X) maxX = MIN_X;
+	if(maxY >= MAX_Y) maxY = MAX_Y - 1 ; // 0-indexed array...
+	if(maxX >= MAX_X) maxX = MAX_X - 1 ; // 0-indexed array...
 
-    car.map.maxX = maxX ;
-    car.map.maxY = maxY ;
+	car.map.maxY = maxY;
+	car.map.maxX = maxX;
+	
+    car.map.currentPos.X = car.map.maxX / 2 ;
+    car.map.currentPos.Y = car.map.maxY / 2 ;
 
-    car.map.currentPos.X = maxX / 2 ;
-    car.map.currentPos.Y = maxY / 2 ;
-
-    switch(dir)
+	switch(dir)
     {
         case 'n': car.dir = dir_north ; break ;
         case 's': car.dir = dir_south ; break ;
@@ -177,29 +170,15 @@ static bool posWithinRoom(car_t* car)
 
 void *runDraw(void* arg)
 {
-	bool changed = false ;
     HANDLE* out = (HANDLE*)arg ;
-    COORD pos ;
-    pos.X = 0 ;
-    pos.Y = 0 ;
-
-    int maxx = car.map.maxX, maxy = car.map.maxY ;
-
+ 
     if(out == NULL) return NULL;
 
-	if(maxy < 2) maxy = 2;
-	if(maxx < 2) maxx = 2;
-
-	draw_room(maxx, maxy);
+	draw_room(car.map.maxX, car.map.maxY);
 	    
-   // Sleep(10000);
-
-    car.map.currentPos.X = maxx / 2 ;
-    car.map.currentPos.Y = maxy / 2 ;
-
-    while(1)
+	//run this thread until stopped/killed...
+    while(true)
     {
-		changed = false ;
         pthread_mutex_lock(&car_lock);
 		
 		car.map.lastPos.X = car.map.currentPos.X ;
@@ -207,10 +186,10 @@ void *runDraw(void* arg)
 		
         switch(car.cmd)
         {
-            case key_cmd_bw : car.map.currentPos.Y ++ ; changed = true ; break ;
-            case key_cmd_fw : car.map.currentPos.Y -- ; changed = true ; break ;
-            case key_cmd_right : car.map.currentPos.X ++ ; changed = true ; break ;
-            case key_cmd_left : car.map.currentPos.X -- ; changed = true ; break ;
+            case key_cmd_bw : car.map.currentPos.Y ++ ; break ;
+            case key_cmd_fw : car.map.currentPos.Y -- ; break ;
+            case key_cmd_right : car.map.currentPos.X ++ ; break ;
+            case key_cmd_left : car.map.currentPos.X -- ; break ;
 			
 			case key_cmd_none : 
             default: 
@@ -219,134 +198,132 @@ void *runDraw(void* arg)
 		
 		if(!posWithinRoom(&car))
 		{
-			printf("Failure, hiting wall!\n");
+			printf("Failure, hitting wall!\n");
 			Sleep(3000);
 			system("cls");
 			exit(0);
 		}		
 	
+		//first, set "blank" at previous position (otherwise we'll get a snake game ;) 
 		SetConsoleCursorPosition(out, car.map.lastPos);
 		printf(" ");
 		SetConsoleCursorPosition(out, car.map.currentPos);
 		printf("*");
 		
         pthread_mutex_unlock(&car_lock);
-        Sleep(200);
+        Sleep(1000 / car.speed);
     }
 }
 
 int main()
 {
-    int i = 0;
-    char* s = "*";
-
+	int i = 0;
     DWORD fdwMode, cNumRead;
     INPUT_RECORD irInBuf[8];
     DWORD bufferSize = 0;
+	HANDLE hConsoleOut ;
+	pthread_t thread1 ;
 
-    if (pthread_mutex_init(&car_lock, NULL) != 0)
-    {
-        printf("\n mutex init failed\n");
-        return 0;
-    }
-
-    int base = 0, hight = 0;
+    //get user input...
+    int base = 0, hight = 0, speed = 5;
     char dir[4]; 
-    printf("Enter size, first base: ");
+    printf("Enter size, first base (min 12 max 64): ");
     scanf("%d", &base);
-    printf("And hight: ");
+    printf("And hight (min 12, max 64): ");
     scanf("%d", &hight);
-    printf("Finally direction (n,s,e,w): ");
-    scanf("%d", &dir);
-
-    printf("base = %d and height = %d, direction = %s\n", base, hight, dir);
-
+	printf("Speed (min 1, max 10): ");
+    scanf("%d", &speed);
+    //printf("Finally direction (n,s,e,w): ");
+    //scanf("%d", &dir);
+	
+	if (pthread_mutex_init(&car_lock, NULL) != 0)
+    {
+        errorExit("mutex init failed");
+    }
+	
     set_car_map(base, hight, dir[0]);
+	set_car_speed(speed);
 
     system("cls");
-
-    hStdin = GetStdHandle(STD_INPUT_HANDLE);
+	
+	hStdin = GetStdHandle(STD_INPUT_HANDLE);
 
     if (hStdin==INVALID_HANDLE_VALUE){
-        printf("Invalid handle value.\n");
-        exit(EXIT_FAILURE);
+        errorExit("Invalid handle");
     }
-
+	
     if (! GetConsoleMode(hStdin, &fdwSaveOldMode) )
-        ErrorExit("GetConsoleMode");
+        errorExit("GetConsoleMode");
 
     fdwMode = ENABLE_WINDOW_INPUT | ENABLE_PROCESSED_INPUT;
     if (! SetConsoleMode(hStdin, fdwMode) )
-        ErrorExit("SetConsoleMode");
+        errorExit("SetConsoleMode");
     
-    HANDLE hConsoleOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    hConsoleOut = GetStdHandle(STD_OUTPUT_HANDLE);
 
-    pthread_t thread1 ;
-    int iret1 = pthread_create( &thread1, NULL, runDraw, (void*)hConsoleOut);
-    
-    while (i < 6000) {
-        // The goal of this program is to print a line of stars
-        //printToCoordinates(i, 5, s);
-        i++;
+	if (hConsoleOut==INVALID_HANDLE_VALUE){
+        errorExit("Invalid output handle");
+    }
+
+	//ok, lets start a thread to do the actual rendering... send console out handle
+	//this function/process will only handle input and forward it to rendering thread.
+	//hence, all the "fun stuff" is done in runDraw(), passed as thread starting point
+    (void)pthread_create( &thread1, NULL, runDraw, (void*)hConsoleOut);
+    	
+    while (i < 600) 
+	{
+        // very simple "timeout"... let program run max 600 loops of ~100 ms => 1 minute... 
+		i++;
 
         GetNumberOfConsoleInputEvents(hStdin, &bufferSize);
 
         // ReadConsoleInput block if the buffer is empty
-        if (bufferSize > 0) {
-            if (! ReadConsoleInput(
-                    hStdin,      // input buffer handle
-                    irInBuf,     // buffer to read into
-                    8, 		     // size of read buffer
-                    &cNumRead) ) // number of records read
-                ErrorExit("ReadConsoleInput");
+        if (bufferSize > 0) 
+		{
+            if (! ReadConsoleInput( hStdin, irInBuf, 8, &cNumRead) )
+                errorExit("ReadConsoleInput");
 
-            // This code is not rock solid, you should iterate over
-            // irInBuf to get what you want, the last event may not contain what you expect
-            // Once again you'll find an event constant list on Microsoft documentation
-            if(cNumRead >= 1)
+            //Handle possible input and send to renderer... (through mutex protected variable "car")
+			if(cNumRead >= 1)
 			{
-				if (irInBuf[cNumRead-1].EventType == KEY_EVENT) {
-					if(KeyEventProc(irInBuf[cNumRead-1].Event.KeyEvent))
+				if (irInBuf[cNumRead-1].EventType == KEY_EVENT) 
+				{
+					if(!handleKeyInput(irInBuf[cNumRead-1].Event.KeyEvent))
 					{
-						 pthread_kill(thread1, 0);
-						// pt	hread_cancel(thread1);
+						//quit gotten, exit
+						pthread_kill(thread1, 0);
 						goto end ;   
 					}
 				}
 			}
-
         }
 
         Sleep(100);
     }
-    // Setting the console back to normal
+	
 end:
     SetConsoleMode(hStdin, fdwSaveOldMode);
     CloseHandle(hStdin);
+	CloseHandle(hConsoleOut);
 
-    printf("\nFIN\n");
+    printf("DONE: success, exit.\n");
 
     return 0;
 }
 
-static void ErrorExit (LPSTR lpszMessage)
+static void errorExit (char* lpszMessage)
 {
     fprintf(stderr, "%s\n", lpszMessage);
-
-    // Restore input mode on exit.
 
     SetConsoleMode(hStdin, fdwSaveOldMode);
 
     ExitProcess(0);
 }
 
-static bool KeyEventProc(KEY_EVENT_RECORD ker)
+static bool handleKeyInput(KEY_EVENT_RECORD ker)
 {
-   // printf("Key event: \"%c\" ", ker.uChar.AsciiChar);
-
-    if(ker.uChar.AsciiChar == 'q') 
-        return true ;
-
+    if(ker.uChar.AsciiChar == 'q') //let calling function exit/quit app 
+        return false ;
 /*
     if(ker.bKeyDown)
         printf("key pressed\n");
@@ -361,5 +338,6 @@ static bool KeyEventProc(KEY_EVENT_RECORD ker)
         default: break ;    
     }
 
-    return false ;
+	// all good, continue...
+    return true ;
 }
