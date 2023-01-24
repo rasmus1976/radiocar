@@ -1,4 +1,7 @@
+#include <stdio.h>
 #include <stdlib.h>
+#include <windows.h>
+#include <pthread.h>
 #include "stdbool.h"
 
 #define MAX_X   64 
@@ -37,7 +40,7 @@ typedef struct car {
 
 //API functions ->
 void *runDraw(void* arg);
-void set_car_map(int maxX, int maxY, char dir);
-void set_car_speed(int speed);
+void set_car_map(int maxX, int maxY, char dir, bool lock);
+void set_car_speed(int speed, bool lock);
 void set_car_params(directon_t dir, key_cmd_t cmd);
 

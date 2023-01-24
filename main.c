@@ -36,8 +36,8 @@ int main()
     //scanf("%d", &dir);
 		
 	
-    set_car_map(base, hight, dir[0]);
-	set_car_speed(speed);
+    set_car_map(base, hight, dir[0], false);
+	set_car_speed(speed, false);
 
     system("cls");
 	
